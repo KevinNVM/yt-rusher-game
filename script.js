@@ -95,6 +95,62 @@ class Obstacle extends Rect {
   }
 }
 
+class ParticleSystem {
+  constructor({
+    x,
+    y,
+    numParticles = 200,
+    particleSize = 5,
+    particleSpeed = 5,
+    color = "white",
+  }) {
+    this.particles = [];
+    this.particlesCount = 0;
+    for (let i = 0; i < numParticles; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const xVelocity = Math.cos(angle) * particleSpeed;
+      const yVelocity = Math.sin(angle) * particleSpeed;
+      const particle = new Circle({
+        x,
+        y,
+        velocity: { x: xVelocity, y: yVelocity },
+        radius: particleSize,
+        color,
+      });
+      this.particles.push(particle);
+    }
+  }
+
+  update() {
+    for (const particle of this.particles) {
+      particle.update();
+      checkOutOfBounds(particle, {
+        onOutOfBounds: () =>
+          this.particles.slice(this.particles.indexOf(particle), 1),
+      });
+    }
+  }
+
+  draw() {
+    this.particlesCount = 0;
+    for (let i = 0; i < this.particles.length; i++) {
+      const particle = this.particles[i];
+      particle.draw();
+      this.particlesCount++;
+    }
+  }
+
+  isDone() {
+    return this.particles.every((particle) => particle.velocity.y >= 0);
+  }
+
+  getParticlesCount() {
+    return this.particlesCount;
+  }
+}
+
+// // // // // // // // // Save // // // // // // // // //
+
 const background = new Rect({
   x: 0,
   y: 0,
@@ -111,8 +167,9 @@ const player = new Rect({
   height: 75,
 });
 
-let projectiles = [];
-let obstacles = [];
+const projectiles = [];
+const obstacles = [];
+const particleSystems = [];
 
 function main() {
   background.draw();
@@ -123,28 +180,49 @@ function main() {
   for (const projectile of projectiles) {
     projectile.update();
     applyGravity(projectile, 0.09);
-    checkOutOfBounds(projectile, (check) => {
-      if (check) projectiles.splice(projectiles.indexOf(projectile), 1);
+    checkOutOfBounds(projectile, {
+      onOutOfBounds: () => {
+        projectiles.splice(projectiles.indexOf(projectile), 1);
+      },
     });
 
     for (const obstacle of obstacles) {
-      if (checkCollision(projectile, obstacle)) {
-        obstacles.splice(obstacles.indexOf(obstacle), 1);
-        if (Math.random() * 10 < 9)
-          projectiles.splice(projectiles.indexOf(projectile), 1);
+      if (obstacle) {
+        checkCollision(projectile, obstacle, {
+          onCollide: () => {
+            obstacles.splice(obstacles.indexOf(obstacle), 1); // remove obstacle
+            projectiles.splice(projectiles.indexOf(projectile), 1); // remove projectile
+          },
+        });
       }
     }
   }
 
-  for (const obstacle of obstacles) {
-    chaseEntity(obstacle, player, 2);
-    obstacle.update();
-    checkOutOfBounds(obstacle, (check) => {
-      if (check) obstacles.splice(obstacles.indexOf(obstacle), 1);
-    });
+  for (let i = particleSystems.length - 1; i >= 0; i--) {
+    const particleSystem = particleSystems[i];
+    particleSystem.update();
+    particleSystem.draw();
+    const particles = particleSystem.particles;
+    for (let j = 0; j < particles.length; j++) {
+      const particle = particles[j];
+      applyGravity(particle, 0.01);
+    }
+    if (particleSystem.isDone()) {
+      particleSystems.splice(i, 1);
+    }
   }
 
-  console.log(projectiles);
+  for (let i = 0; i < obstacles.length; i++) {
+    const obstacle = obstacles[i];
+    obstacle.update();
+    checkOutOfBounds(obstacle, {
+      shape: "rect",
+      onOutOfBounds: () => {
+        obstacles.splice(i, 1);
+        i--;
+      },
+    });
+  }
 }
 
 function applyGravity(object, gravity) {
@@ -169,23 +247,48 @@ function handlePlayerInput(player) {
   }
 }
 
-function checkOutOfBounds(object, callback) {
-  let check = false;
-  if (
-    object.x + object.radius < 0 ||
-    object.x - object.radius > canvas.width ||
-    object.y + object.radius < 0 ||
-    object.y - object.radius > canvas.height
-  ) {
-    check = true;
-  } else check = false;
-  if (typeof callback === "function") callback(check);
+function checkOutOfBounds(
+  object,
+  { onOutOfBounds: onOutOfBounds, shape = "circle" }
+) {
+  if (!onOutOfBounds || !shape) throw new Error("Missing required parameter");
+
+  switch (shape) {
+    case "circle":
+      if (
+        object.x + object.radius < 0 ||
+        object.x - object.radius > canvas.width ||
+        object.y + object.radius < 0 ||
+        object.y - object.radius > canvas.height
+      ) {
+        if (typeof onOutOfBounds === "function") {
+          onOutOfBounds(true);
+          return true;
+        }
+      } else return false;
+      break;
+
+    default:
+      if (
+        object.x + object.width < 0 ||
+        object.x > canvas.width ||
+        object.y + object.height < 0 ||
+        object.y > canvas.height
+      ) {
+        if (typeof onOutOfBounds === "function") {
+          onOutOfBounds(true);
+          return true;
+        }
+      } else return false;
+
+      break;
+  }
 }
 
 function createObstacle() {
   const obstacle = new Obstacle({
-    width: 50,
-    height: 50,
+    width: 100,
+    height: 100,
     color: "blue",
     speed: 2,
   });
@@ -208,20 +311,35 @@ function chaseEntity(object1, object2, speed) {
   }
 }
 
-function checkCollision(projectile, obstacle) {
+function checkCollision(object1, object2, { onCollide }) {
+  if (!onCollide) throw new Error("Missing required parameters");
+
   const closestX = Math.max(
-    obstacle.x,
-    Math.min(projectile.x, obstacle.x + obstacle.width)
+    object2.x,
+    Math.min(object1.x, object2.x + object2.width)
   );
   const closestY = Math.max(
-    obstacle.y,
-    Math.min(projectile.y, obstacle.y + obstacle.height)
+    object2.y,
+    Math.min(object1.y, object2.y + object2.height)
   );
-  const dx = closestX - projectile.x;
-  const dy = closestY - projectile.y;
+  const dx = closestX - object1.x;
+  const dy = closestY - object1.y;
   const distance = Math.sqrt(dx * dx + dy * dy);
 
-  return distance <= projectile.radius;
+  if (distance <= object1.radius) {
+    onCollide(true);
+
+    // Create a new particle system and add it to the array.
+    const particleSystem = new ParticleSystem({
+      x: object1.x,
+      y: object1.y,
+      numParticles: 20,
+      particleSize: 7.5,
+      particleSpeed: 2.5,
+      color: object2?.color,
+    });
+    particleSystems.push(particleSystem);
+  } else return false;
 }
 
 function gameLoop() {
@@ -229,7 +347,7 @@ function gameLoop() {
   main();
   window.requestAnimationFrame(gameLoop);
 }
-setInterval(createObstacle, 1000); // create a new obstacle every second
+setInterval(createObstacle, 500); // create a new obstacle every second
 gameLoop();
 
 canvas.addEventListener("click", (event) => {
