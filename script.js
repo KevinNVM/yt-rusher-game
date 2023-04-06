@@ -128,7 +128,6 @@ function main() {
     });
 
     for (const obstacle of obstacles) {
-      chaseEntity(obstacle, projectile, 10);
       if (checkCollision(projectile, obstacle)) {
         obstacles.splice(obstacles.indexOf(obstacle), 1);
         if (Math.random() * 10 < 9)
@@ -138,6 +137,7 @@ function main() {
   }
 
   for (const obstacle of obstacles) {
+    chaseEntity(obstacle, player, 2);
     obstacle.update();
     checkOutOfBounds(obstacle, (check) => {
       if (check) obstacles.splice(obstacles.indexOf(obstacle), 1);
@@ -229,7 +229,7 @@ function gameLoop() {
   main();
   window.requestAnimationFrame(gameLoop);
 }
-setInterval(createObstacle, 500); // create a new obstacle every second
+setInterval(createObstacle, 1000); // create a new obstacle every second
 gameLoop();
 
 canvas.addEventListener("click", (event) => {
