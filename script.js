@@ -1,155 +1,31 @@
 const canvas = document.querySelector("canvas");
 const ctx = canvas.getContext("2d");
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+canvas.width = innerWidth;
+canvas.height = innerHeight;
 
-let Paused = false;
-const GRAVITY = 0.5;
+const enemySpawnRate = 1000;
+const enemyMaxSpeed = 5;
+let projectileSpeed = 10;
 
-// Define the base rectangle class
-class Rect {
-  constructor({ x, y, velocity = null, width, height, color = "white" }) {
-    this.x = x;
-    this.y = y;
-    this.velocity = velocity ?? { x: 0, y: 0 };
-    this.width = width;
-    this.height = height;
-    this.color = color;
-  }
+let PAUSED = true;
 
-  draw() {
-    ctx.fillStyle = this.color;
-    ctx.fillRect(this.x, this.y, this.width, this.height);
-  }
+const GRAVITY = 0.3;
+const maxSpeed = 10;
+const acceleration = 0.5;
+const friction = 0.8;
+const maxVelocity = 10;
+let xAcceleration = 0;
 
-  update() {
-    this.draw();
+const FULL_RESTORE_CHANCE = 0.0001; // 0.01% chance of full health restoration
+const FIFTY_PERCENT_RESTORE_CHANCE = 0.01; // 1% chance of restoring 50% of health
+const TWO_POINT_FIVE_PERCENT_RESTORE_CHANCE = 0.5; // 50% chance of restoring 2.5% of health
 
-    this.x += this.velocity.x;
-    this.y += this.velocity.y;
-  }
-}
+let baseHealth = 100;
+let playerHealth = 100;
 
-class Circle {
-  constructor({ x, y, velocity = null, radius, color = "white" }) {
-    this.x = x;
-    this.y = y;
-    this.velocity = velocity ?? { x: 0, y: 0 };
-    this.radius = radius;
-    this.color = color;
-  }
-
-  draw() {
-    ctx.beginPath();
-    ctx.fillStyle = this.color;
-    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  update() {
-    this.draw();
-
-    this.x += this.velocity.x;
-    this.y += this.velocity.y;
-  }
-}
-
-class Projectile extends Circle {
-  constructor({ x, y, speed, angle }) {
-    const radius = 5;
-    const velocity = {
-      x: speed * Math.cos(angle),
-      y: speed * Math.sin(angle),
-    };
-    super({ x, y, velocity, radius, color: "red" });
-  }
-}
-
-class Obstacle extends Rect {
-  constructor({ width, height, color = "white", speed }) {
-    const x = Math.random() * canvas.width;
-    super({ x, y: 0, velocity: { x: 0, y: speed }, width, height, color });
-    this.originalWidth = width;
-    this.originalHeight = height;
-  }
-
-  draw() {
-    if (this.width > 0 && this.height > 0) {
-      const shrinkFactor =
-        1 -
-        (this.originalWidth * this.originalHeight - this.width * this.height) /
-          (this.originalWidth * this.originalHeight);
-      const halfWidth = (this.width / 2) * shrinkFactor;
-      const halfHeight = (this.height / 2) * shrinkFactor;
-      const centerX = this.x + this.width / 2;
-      const centerY = this.y + this.height / 2;
-      ctx.fillStyle = this.color;
-      ctx.fillRect(
-        centerX - halfWidth,
-        centerY - halfHeight,
-        this.width * shrinkFactor,
-        this.height * shrinkFactor
-      );
-    }
-  }
-}
-
-class ParticleSystem {
-  constructor({
-    x,
-    y,
-    numParticles = 200,
-    particleSize = 5,
-    particleSpeed = 5,
-    color = "white",
-  }) {
-    this.particles = [];
-    this.particlesCount = 0;
-    for (let i = 0; i < numParticles; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const xVelocity = Math.cos(angle) * particleSpeed;
-      const yVelocity = Math.sin(angle) * particleSpeed;
-      const particle = new Circle({
-        x,
-        y,
-        velocity: { x: xVelocity, y: yVelocity },
-        radius: particleSize,
-        color,
-      });
-      this.particles.push(particle);
-    }
-  }
-
-  update() {
-    for (const particle of this.particles) {
-      particle.update();
-      checkOutOfBounds(particle, {
-        onOutOfBounds: () =>
-          this.particles.slice(this.particles.indexOf(particle), 1),
-      });
-    }
-  }
-
-  draw() {
-    this.particlesCount = 0;
-    for (let i = 0; i < this.particles.length; i++) {
-      const particle = this.particles[i];
-      particle.draw();
-      this.particlesCount++;
-    }
-  }
-
-  isDone() {
-    return this.particles.every((particle) => particle.velocity.y >= 0);
-  }
-
-  getParticlesCount() {
-    return this.particlesCount;
-  }
-}
-
-// // // // // // // // // Save // // // // // // // // //
+let lastProjectileTime = 0;
+let projectileCooldown = 500; // in milliseconds
 
 const background = new Rect({
   x: 0,
@@ -159,70 +35,55 @@ const background = new Rect({
   color: "rgba(0, 0, 0, 0.1)",
 });
 
-const player = new Rect({
+const player = new Player({
   x: canvas.width / 2,
   y: canvas.height / 2,
   velocity: { x: 0, y: 0 },
   width: 50,
   height: 75,
+  color: "white",
+  helath: 100,
 });
 
 const projectiles = [];
 const obstacles = [];
 const particleSystems = [];
+const healthBar = new HealthBar(10, 10, canvas.width - 20, 20, "red");
+const score = new Score();
+const highestScore = new Score(
+  parseInt(localStorage.getItem("highestScore") || "0"),
+  20,
+  90,
+  "Highest Score"
+);
 
+// This function is the main function that runs the game.
 function main() {
+  if (PAUSED) return;
+  healthBar.update(playerHealth);
+
+  console.log(score.score);
+
+  // Draws the background image.
   background.draw();
+
+  // Updates the player's position.
   player.update();
+
+  // Applies gravity to the player.
   applyGravity(player);
+
+  // Handles player input (such as moving leftc or right).
   handlePlayerInput(player);
 
-  for (const projectile of projectiles) {
-    projectile.update();
-    applyGravity(projectile, 0.09);
-    checkOutOfBounds(projectile, {
-      onOutOfBounds: () => {
-        projectiles.splice(projectiles.indexOf(projectile), 1);
-      },
-    });
+  // Run loops that contain game's logic
+  gameFunctionLoop();
 
-    for (const obstacle of obstacles) {
-      if (obstacle) {
-        checkCollision(projectile, obstacle, {
-          onCollide: () => {
-            obstacles.splice(obstacles.indexOf(obstacle), 1); // remove obstacle
-            projectiles.splice(projectiles.indexOf(projectile), 1); // remove projectile
-          },
-        });
-      }
-    }
-  }
+  healthBar.draw();
 
-  for (let i = particleSystems.length - 1; i >= 0; i--) {
-    const particleSystem = particleSystems[i];
-    particleSystem.update();
-    particleSystem.draw();
-    const particles = particleSystem.particles;
-    for (let j = 0; j < particles.length; j++) {
-      const particle = particles[j];
-      applyGravity(particle, 0.01);
-    }
-    if (particleSystem.isDone()) {
-      particleSystems.splice(i, 1);
-    }
-  }
-
-  for (let i = 0; i < obstacles.length; i++) {
-    const obstacle = obstacles[i];
-    obstacle.update();
-    checkOutOfBounds(obstacle, {
-      shape: "rect",
-      onOutOfBounds: () => {
-        obstacles.splice(i, 1);
-        i--;
-      },
-    });
-  }
+  score.drawScore();
+  highestScore.drawScore();
+  decreaseHealth(0);
 }
 
 function applyGravity(object, gravity) {
@@ -234,16 +95,42 @@ function applyGravity(object, gravity) {
 }
 
 function handlePlayerInput(player) {
-  if (keyPressed.up) {
-    player.velocity.y = -10;
+  // Set boundaries
+  const leftBoundary = 0;
+  const rightBoundary = canvas.width;
+  const topBoundary = 0;
+  const bottomBoundary = canvas.height;
+
+  if (keyPressed.up && player.y > topBoundary) {
+    // player.velocity.y = player.velocity.y == 0 ? -10 : player.velocity.y * 1.04;
+    player.velocity.y = Math.max(player.velocity.y - 1, -10);
   }
 
-  if (keyPressed.left) {
-    player.velocity.x = -10;
-  } else if (keyPressed.right) {
-    player.velocity.x = 10;
+  if (keyPressed.left && !keyPressed.right && player.x > leftBoundary) {
+    xAcceleration = -acceleration;
+  } else if (keyPressed.right && !keyPressed.left && player.x < rightBoundary) {
+    xAcceleration = acceleration;
   } else {
-    player.velocity.x = 0;
+    xAcceleration = 0;
+    player.velocity.x *= friction; // apply friction
+  }
+
+  if (Math.abs(player.velocity.x) < maxVelocity) {
+    player.velocity.x += xAcceleration;
+  }
+
+  // Check if player is out of bounds
+  if (player.x < leftBoundary) {
+    player.x = leftBoundary;
+  }
+  if (player.x + player.width > rightBoundary) {
+    player.x = rightBoundary - player.width;
+  }
+  if (player.y < topBoundary) {
+    player.y = topBoundary;
+  }
+  if (player.y > bottomBoundary) {
+    player.y = bottomBoundary;
   }
 }
 
@@ -286,18 +173,24 @@ function checkOutOfBounds(
 }
 
 function createObstacle() {
-  const obstacle = new Obstacle({
-    width: 100,
-    height: 100,
-    color: "blue",
-    speed: 2,
-  });
-  obstacles.push(obstacle);
+  setInterval(() => {
+    if (PAUSED) return;
+    const red = Math.floor(Math.random() * 256); // generates a random value between 0 and 255
+    const green = Math.floor(Math.random() * 256);
+    const blue = Math.floor(Math.random() * 256);
+    const color = `rgb(${red}, ${green}, ${blue})`; // creates an RGB color string
+    const obstacle = new Obstacle({
+      width: 50,
+      height: 50,
+      color,
+      speed: Math.random() * enemyMaxSpeed,
+    });
+    obstacles.push(obstacle);
+  }, enemySpawnRate);
 }
 
 function chaseEntity(object1, object2, speed) {
   speed = speed || object1.velocity.x + object1.velocity.y;
-  console.log(speed);
   const dx = object1.x - object2.x;
   const dy = object1.y - object2.y;
   const distance = Math.sqrt(dx * dx + dy * dy);
@@ -342,17 +235,224 @@ function checkCollision(object1, object2, { onCollide }) {
   } else return false;
 }
 
+function gameFunctionLoop() {
+  // Loops through all the projectiles in the game.
+  for (const projectile of projectiles) {
+    // Updates the projectile's position.
+    projectile.update();
+
+    // Applies gravity to each projectiles
+    applyGravity(projectile, 0.09);
+
+    // Removes the projectile if it goes out of bounds.
+    checkOutOfBounds(projectile, {
+      onOutOfBounds: () => {
+        projectiles.splice(projectiles.indexOf(projectile), 1);
+      },
+    });
+
+    // Loops through all the obstacles in the game.
+    for (const obstacle of obstacles) {
+      // Checks if the projectile collides with an obstacle.
+      if (obstacle) {
+        checkCollision(projectile, obstacle, {
+          onCollide: () => {
+            // Removes the obstacle and the projectile if they collide.
+            handleScore(projectile);
+            obstacles.splice(obstacles.indexOf(obstacle), 1);
+            projectiles.splice(projectiles.indexOf(projectile), 1);
+          },
+        });
+      }
+    }
+  }
+
+  // Loops through all the particle systems in the game.
+  for (let i = particleSystems.length - 1; i >= 0; i--) {
+    // Updates the particle system.
+    const particleSystem = particleSystems[i];
+    particleSystem.update();
+
+    // Draws the particle system.
+    particleSystem.draw();
+
+    // Loops through all the particles in the particle system.
+    const particles = particleSystem.particles;
+    for (let j = 0; j < particles.length; j++) {
+      const particle = particles[j];
+
+      // Applies gravity to each particle.
+      applyGravity(particle, 0.02);
+    }
+
+    // Removes the particle system if it is finished.
+    if (particleSystem.isDone()) {
+      particleSystems.splice(i, 1);
+    }
+  }
+
+  // Loops through all the obstacles in the game.
+  for (let i = 0; i < obstacles.length; i++) {
+    const obstacle = obstacles[i];
+
+    // Updates the obstacle's position.
+    obstacle.update();
+
+    // Removes the obstacle if it goes out of bounds.
+    checkOutOfBounds(obstacle, {
+      shape: "rect",
+      onOutOfBounds: () => {
+        obstacles.splice(i, 1);
+        decreaseHealth();
+        i--;
+      },
+    });
+  }
+}
+
+function createProjectile(mouseEvent) {
+  let x, y;
+  if (mouseEvent.type === "click") {
+    x = mouseEvent.clientX;
+    y = mouseEvent.clientY;
+  } else if (mouseEvent.type === "touchstart") {
+    x = mouseEvent.touches[0].clientX;
+    y = mouseEvent.touches[0].clientY;
+  }
+
+  const currentTime = Date.now();
+  if (currentTime - lastProjectileTime < projectileCooldown) {
+    return; // don't spawn a new projectile yet
+  }
+
+  // Get the bounding rectangle of the canvas
+  const rect = canvas.getBoundingClientRect();
+  // Calculate the scaling factor for the canvas
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  // Calculate the mouse coordinates relative to the canvas
+  const mouseX = (x - rect.left) * scaleX;
+  const mouseY = (y - rect.top) * scaleY;
+  // Calculate the angle between the player and the mouse position
+  const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+  // Set the speed of the projectile
+  const speed = projectileSpeed;
+  // Create a new projectile with the player's position, angle, and speed
+  const projectile = new Projectile({ x: player.x, y: player.y, angle, speed });
+  // Add the new projectile to the projectiles array
+  projectiles.push(projectile);
+
+  lastProjectileTime = currentTime; // update the last projectile time
+}
+
+function decreaseHealth(number = 10) {
+  if (healthBar.currentHealth <= 0) {
+    PAUSED = true;
+    showDeathScreen();
+  } else playerHealth -= number;
+}
+
 function gameLoop() {
-  if (Paused) return;
   main();
   window.requestAnimationFrame(gameLoop);
 }
-setInterval(createObstacle, 500); // create a new obstacle every second
+
+createObstacle();
 gameLoop();
 
-canvas.addEventListener("click", (event) => {
-  const angle = Math.atan2(event.clientY - player.y, event.clientX - player.x);
-  const speed = 10;
-  const projectile = new Projectile({ x: player.x, y: player.y, angle, speed });
-  projectiles.push(projectile);
-});
+// canvas.addEventListener("click", (event) => {
+//   const angle = Math.atan2(event.clientY - player.y, event.clientX - player.x);
+//   const speed = 10;
+//   const projectile = new Projectile({ x: player.x, y: player.y, angle, speed });
+//   projectiles.push(projectile);
+// });
+
+// Add a click event listener to the canvas
+canvas.addEventListener("click", createProjectile);
+canvas.addEventListener("touchstart", createProjectile);
+
+function handleScore(projectile) {
+  score.updateScore(
+    Math.max(Math.floor(projectile.getDistanceTraveled() / 5), 1)
+  );
+
+  if (Math.random() < FULL_RESTORE_CHANCE) {
+    playerHealth = baseHealth; // fully restore health
+  } else if (
+    Math.random() < FIFTY_PERCENT_RESTORE_CHANCE &&
+    playerHealth <= baseHealth * 0.5
+  ) {
+    playerHealth += baseHealth * 0.5; // restore 50% of baseHealth
+  } else if (Math.random() < TWO_POINT_FIVE_PERCENT_RESTORE_CHANCE) {
+    if (playerHealth < baseHealth) {
+      playerHealth += baseHealth * 0.025; // restore 2.5% of baseHealth
+    }
+  } else if (Math.random() < 0.1) {
+    // 10% chance of restoring health
+    if (playerHealth < baseHealth) {
+      playerHealth += baseHealth * 0.05; // restore 5% of baseHealth
+    }
+  } else if (Math.random() < 0.2) {
+    // 20% chance of restoring health
+    if (playerHealth < baseHealth) {
+      playerHealth += baseHealth * 0.05; // restore 5% of baseHealth
+    }
+  }
+
+  if (score.score > highestScore.score) {
+    localStorage.setItem("highestScore", score.score);
+    highestScore.score = score.score;
+  }
+}
+
+function gameReset() {
+  // Reset player's initial state.
+  player.x = canvas.width / 2;
+  player.y = canvas.height / 2;
+  player.velocity.x = 0;
+  player.velocity.y = 0;
+  playerHealth = baseHealth;
+  healthBar.update(playerHealth);
+
+  // Reset obstacles, projectiles, and particle systems.
+  obstacles.length = 0;
+  projectiles.length = 0;
+  particleSystems.length = 0;
+
+  // Reset game state flags.
+  PAUSED = false;
+  score.score = 0;
+  keyPressed.up = false;
+  keyPressed.down = false;
+  keyPressed.left = false;
+  keyPressed.right = false;
+}
+
+function getScoreText() {
+  return `Score: ${score.score} Highest: ${highestScore.score}`;
+}
+
+const btnPlay = document.querySelector("button");
+const mainMenu = document.querySelector(".main-menu");
+const scoreText = document.querySelector("#score");
+const mainMenuText = document.querySelector("h1");
+scoreText.innerText = getScoreText();
+btnPlay.onclick = () => {
+  PAUSED = false;
+  gameReset();
+  mainMenu.classList.toggle("hidden");
+};
+
+function showDeathScreen() {
+  mainMenu.classList.toggle("hidden");
+  scoreText.innerText = getScoreText();
+  mainMenuText.innerText = "RUSHER";
+}
+
+function pause() {
+  PAUSED = !PAUSED;
+  mainMenu.classList.toggle("hidden");
+  btnPlay.classList.toggle("hidden");
+  scoreText.innerText = getScoreText();
+  mainMenuText.innerText = "Paused";
+}

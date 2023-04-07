@@ -6,6 +6,8 @@ const keyPressed = {
 };
 
 window.onkeydown = (e) => {
+  if (e.key === "Escape") pause();
+
   switch (e.key.toLowerCase()) {
     case "w":
       keyPressed.up = true;
@@ -38,3 +40,22 @@ window.onkeyup = (e) => {
       break;
   }
 };
+
+// Touch Controls
+const upBtn = document.getElementById("up-btn");
+const leftBtn = document.getElementById("left-btn");
+const rightBtn = document.getElementById("right-btn");
+
+upBtn.addEventListener("touchstart", () => (keyPressed.up = true));
+upBtn.addEventListener("touchend", () => (keyPressed.up = false));
+leftBtn.addEventListener("touchstart", () => (keyPressed.left = true));
+leftBtn.addEventListener("touchend", () => (keyPressed.left = false));
+
+rightBtn.addEventListener("touchstart", () => (keyPressed.right = true));
+rightBtn.addEventListener("touchend", () => (keyPressed.right = false));
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") {
+    if (!PAUSED) pause();
+  }
+});
